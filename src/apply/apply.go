@@ -154,7 +154,13 @@ func getColorCSS(scheme map[string]string) string {
 func insertCustomApp(jsPath string, flags Flag) {
 	utils.ModifyFile(jsPath, func(content string) string {
 		const REACT_REGEX = `lazy\(\(\(\)=>(\w+)\.(\w+)\(\d+\)\.then\(\w+\.bind\(\w+,\d+\)\)\)\)`
+		const FALLBACK_REACT_REGEX = `lazy\(\(function\(\)\{return (\w+)\.(\w+)\(\d+\).then\(\w+\.bind\(\w+,\d+\)\)\}\)\)`
+
 		const REACT_ELEMENT_REGEX = `\w+\(\)\.createElement\(([\w\.]+),\{path:"\/collection"\}`
+
+		const SPICETIFY_REGEX = `,spicetifyApp%d=Spicetify.React.lazy((()=>%s.%s("%s").then(%s.bind(%s,"%s"))))`
+		const FALLBACK_SPICETIFY_REGEX = `,spicetifyApp%d=Spicetify.React.lazy((function(){return %s.%s("%s").then(%s.bind(%s,"%s"))}))`
+
 		reactSymbs := utils.FindSymbol(
 			"Custom app React symbols",
 			content,
@@ -165,6 +171,16 @@ func insertCustomApp(jsPath string, flags Flag) {
 			content,
 			[]string{
 				REACT_ELEMENT_REGEX})
+		var spicetifyRegex = SPICETIFY_REGEX
+
+		if len(reactSymbs) == 0 {
+			spicetifyRegex = FALLBACK_SPICETIFY_REGEX
+			reactSymbs = utils.FindSymbol(
+				"Custom app React symbols",
+				content,
+				[]string{
+					FALLBACK_REACT_REGEX})
+		}
 
 		appMap := ""
 		appReactMap := ""
@@ -178,7 +194,7 @@ func insertCustomApp(jsPath string, flags Flag) {
 			appNameArray += fmt.Sprintf(`"%s",`, app)
 
 			appReactMap += fmt.Sprintf(
-				`,spicetifyApp%d=Spicetify.React.lazy((()=>%s.%s("%s").then(%s.bind(%s,"%s"))))`,
+				spicetifyRegex,
 				index, reactSymbs[0], reactSymbs[1],
 				appName, reactSymbs[0], reactSymbs[0], appName)
 
