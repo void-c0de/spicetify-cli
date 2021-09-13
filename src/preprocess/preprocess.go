@@ -89,7 +89,6 @@ func Start(version string, extractedAppsPath string, flags Flag) {
 		readLocalCssMap(&cssTranslationMap)
 	}
 
-
 	filepath.Walk(appPath, func(path string, info os.FileInfo, err error) error {
 		fileName := info.Name()
 		extension := filepath.Ext(fileName)
@@ -294,25 +293,56 @@ func exposeAPIs_main(input string) string {
 		&input,
 		`\w+=\(\w+,(\w+)\.lazy\)\(\(\(\)=>Promise\.resolve\(\)\.then\(\w+\.bind\(\w+,\w+\)\)\)\);`,
 		`${0}Spicetify.React=${1};`)
+	// Fallback: React Hook
+	utils.ReplaceOnce(
+		&input,
+		`\w+=\(\w+,(\w+)\.lazy\)\(\(function\(\)\{return Promise\.resolve\(\)\.then\(\w+\.bind\(\w+,\w+\)\)\}\)\);`,
+		`${0}Spicetify.React=${1};`)
 
 	utils.Replace(
 		&input,
 		`"data-testid":`,
 		`"":`)
 
+	var baseRegexSuccess = false
 	reAllAPIPromises := regexp.MustCompile(`return{version:\w+,(\w+:[\w!\,\(\)\.]+,)+((get\w+:\(\)=>\w+,?)+)}`)
 	allAPIPromises := reAllAPIPromises.FindAllStringSubmatch(input, -1)
+
+	if len(allAPIPromises) == 0 {
+		baseRegexSuccess = false
+		reAllAPIPromises = regexp.MustCompile(`return (\w+=\w+\.sent),\w+\.next=\d,(Promise.all\(\[(\w\.getSession\(\),)([\w\(\)\.,]+?)\]\))([;,])`)
+		allAPIPromises = reAllAPIPromises.FindAllStringSubmatch(input, -1)
+	}
+
 	for _, found := range allAPIPromises {
-		splitted := strings.Split(found[2], ",")
-		if len(splitted) > 15 { // Actual number is about 34
-			matchMap := regexp.MustCompile(`get(\w+):\(\)=>(\w+),?`)
-			code := "Spicetify.Platform={};"
-			for _, apiFunc := range splitted {
-				matches := matchMap.FindStringSubmatch(apiFunc)
-				code += "Spicetify.Platform[\"" + fmt.Sprint(matches[1]) + "\"]=" + fmt.Sprint(matches[2]) + ";"
+		if baseRegexSuccess {
+			splitted := strings.Split(found[2], ",")
+			if len(splitted) > 15 { // Actual number is about 34
+				matchMap := regexp.MustCompile(`get(\w+):\(\)=>(\w+),?`)
+				code := "Spicetify.Platform={};"
+				for _, apiFunc := range splitted {
+					matches := matchMap.FindStringSubmatch(apiFunc)
+					code += "Spicetify.Platform[\"" + fmt.Sprint(matches[1]) + "\"]=" + fmt.Sprint(matches[2]) + ";"
+				}
+				input = strings.Replace(input, found[0], code+found[0], 1)
 			}
-			input = strings.Replace(input, found[0], code + found[0], 1)
-		}
+		} /* else { // OLD implementation
+			splitted := strings.Split(found[3]+found[4], ",")
+			if len(splitted) > 15 { // Actual number is about 24
+				re := regexp.MustCompile(`\w+\.(\w+)\(\)`)
+				// set t = e.sent, call Promise.all for APIs, then add Spicetify APIs to object
+				code := found[1] + ";" + found[2] + ".then(v => {Spicetify.Platform = {};"
+
+				for apiFuncIndex, apiFunc := range splitted {
+					name := re.ReplaceAllString(apiFunc, `${1}`)
+
+					if strings.HasPrefix(name, "get") {
+						name = strings.Replace(name, "get", "", 1)
+					}
+					code += "Spicetify.Platform[\"" + name + "\"] = v[" + fmt.Sprint(apiFuncIndex) + "];"
+				}
+			}
+		} */
 	}
 
 	// Profile Menu hook v1.1.56
@@ -335,12 +365,21 @@ Spicetify.React.useEffect(() => {
 		&input,
 		`=(\w+)=>(\w+\(\)\.createElement\(([\w\.]+),\(\w+,[\w\.]+\)\(\{\},\w+,\{action:"open",trigger:"right-click"\}\)\))`,
 		`=Spicetify.ReactComponent.RightClickMenu=${1}=>${2};Spicetify.ReactComponent.ContextMenu=${3}`)
+	// Fallback: React Component: Context Menu and Right Click Menu
+	utils.Replace(
+		&input, `return (\w+\(\)\.createElement\(([\w\.]+),\w+\(\)\(\{\},\w+,\{action:"open",trigger:"right-click"\}\)\))`,
+		`Spicetify.ReactComponent.ContextMenu=${2};Spicetify.ReactComponent.RightClickMenu=${1};return Spicetify.ReactComponent.RightClickMenu`)
 
 	// React Component: Context Menu - Menu
 	utils.Replace(
 		&input,
 		`=\(\{children:\w+,onClose:\w+,getInitialFocusElement:\w+\}\)`,
 		`=Spicetify.ReactComponent.Menu${0}`)
+	// Fallback: React Component: Context Menu - Menu
+	utils.Replace(
+		&input,
+		`return (\w+\(\)\.createElement\("ul",\w+\(\)\(\{tabIndex:-?\d+,ref:\w+,role:"menu","data-depth":\w+\},\w+\),\w+\))`,
+		`return Spicetify.ReactComponent.Menu=${1}`)
 
 	// React Component: Context Menu - Menu Item
 	utils.Replace(
@@ -520,12 +559,12 @@ type githubRelease = utils.GithubRelease
 
 func splitVersion(version string) ([3]int, error) {
 	vstring := version
-	if(vstring[0:1] == "v") {
+	if vstring[0:1] == "v" {
 		vstring = version[1:]
 	}
 	vSplit := strings.Split(vstring, ".")
 	var vInts [3]int
-	if(len(vSplit) != 3) {
+	if len(vSplit) != 3 {
 		return [3]int{}, errors.New("Invalid version string")
 	}
 	for i := 0; i < 3; i++ {
@@ -552,7 +591,7 @@ func FetchLatestTagMatchingOrMaster(version string) (string, error) {
 		return "", err
 	}
 	// major version matches latest, use master branch
-	if(ver[0] == versionS[0] && ver[1] == versionS[1]) {
+	if ver[0] == versionS[0] && ver[1] == versionS[1] {
 		return "master", nil
 	} else {
 		return FetchLatestTagMatchingVersion(version)
@@ -585,7 +624,7 @@ func FetchLatestTagMatchingVersion(version string) (string, error) {
 	for _, rel := range releases {
 		ver := strings.Split(rel.TagName[1:], ".")
 		if len(ver) != 3 {
-			break;
+			break
 		} else {
 			verMin, err := strconv.Atoi(ver[2])
 			if err != nil {
