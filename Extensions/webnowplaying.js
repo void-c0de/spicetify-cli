@@ -38,6 +38,7 @@
         if (!storage.ARTIST) {
             storage.ARTIST = meta.album_title; // Podcast
         }
+
         Spicetify.Platform.LibraryAPI.contains(data.track.uri).then(
             ([added]) => (storage.RATING = added ? 5 : 0)
         );
